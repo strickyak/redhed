@@ -9,10 +9,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/base64"
+	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"strings"
 )
 
@@ -393,47 +395,91 @@ func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 }
 
 func EncryptFilename(name string, key *Key) string {
-  // Create random 96-byt nonce, for 128-bit IV. 
-  nonce := make([]byte, 12)
+	// Create random 96-byt nonce, for 128-bit IV.
+	nonce := make([]byte, 12)
 	c, err := rand.Read(nonce)
 	if err != nil {
 		log.Panicln(err)
 	}
-  if c != 12 {
+	if c != 12 {
 		log.Panicln("bad rand.Read")
-  }
-  iv := make([]byte, 16)
-  copy(iv, nonce)
+	}
+	iv := make([]byte, 16)
+	copy(iv, nonce)
 
-  blocks := []byte(name)
-  residue := len(blocks) & 15
-  if residue != 0 {
-    // Pad final block with NULs.
-    blocks = append(blocks, make([]byte, 16 - residue)...)
-  }
+	blocks := []byte(name)
+	residue := len(blocks) & 15
+	if residue != 0 {
+		// Pad final block with NULs.
+		blocks = append(blocks, make([]byte, 16-residue)...)
+	}
 
-  en := cipher.NewCBCEncrypter(key.AES, iv)
-  en.CryptBlocks(blocks, blocks)
+	en := cipher.NewCBCEncrypter(key.AES, iv)
+	en.CryptBlocks(blocks, blocks)
 
-  var bits []byte
-  bits = append(bits, nonce...)
-  bits = append(bits, blocks...)
-  dark := base64.URLEncoding.EncodeToString(bits)
-  return dark
+	var bits []byte
+	bits = append(bits, nonce...)
+	bits = append(bits, blocks...)
+	dark := base64.URLEncoding.EncodeToString(bits)
+	return dark
 }
 
 func DecryptFilename(dark string, key *Key) string {
-  x, err := base64.URLEncoding.DecodeString(dark)
+	x, err := base64.URLEncoding.DecodeString(dark)
 	if err != nil {
 		log.Panicln(err)
 	}
 
-  nonce := x[:12]
-  iv := make([]byte, 16)
-  copy(iv, nonce)
+	nonce := x[:12]
+	iv := make([]byte, 16)
+	copy(iv, nonce)
 
-  de := cipher.NewCBCDecrypter(key.AES, iv)
-  de.CryptBlocks(x[12:], x[12:])
+	de := cipher.NewCBCDecrypter(key.AES, iv)
+	de.CryptBlocks(x[12:], x[12:])
 
-  return strings.TrimRight(string(x[12:]), "\000")
+	return strings.TrimRight(string(x[12:]), "\000")
+}
+
+// Encode5bits encodes the lowest 5 bits as a letter 'A'..'Z', but values 26..31 panic.
+func Encode5bits(n int16) byte {
+	n &= 31
+	if n < 26 {
+		return byte(n + 'A') // 0 .. 25 -> 'A' .. 'Z'
+	}
+	panic(fmt.Sprintf("Encode5bits: Bad input %d.", n))
+}
+
+// Only defined on A..Z (case independant)
+func Decode5bits(c byte) int16 {
+	if 'A' <= c && c <= 'Z' {
+		return int16(c) - 'A'
+	}
+	if 'a' <= c && c <= 'z' {
+		return int16(c) - 'a'
+	}
+	panic(fmt.Sprintf("Decode5bits: Bad byte %d.", c))
+}
+
+// EncodeKeyID is the inverse of DecodeKeyID.
+// Not all int16s are allowed; some will panic.
+func EncodeKeyID(n int16) string {
+	if n >= 0 {
+		return fmt.Sprintf("%d", n)
+	} else {
+		return string([]byte{
+			Encode5bits(n >> 10),
+			Encode5bits(n >> 5),
+			Encode5bits(n)})
+	}
+}
+
+// DecodeKeyID takes ASCII integers "0".."32767" or 3 letters 'AAA'..'ZZZ'.
+// ASCII integers encode to positive int16s; 3 letters to negative int16s.
+// Not all negative int16s are possible, but base32 digits could be ambiguous.
+func DecodeKeyID(s string) int16 {
+	n, err := strconv.Atoi(s)
+	if err == nil {
+		return int16(n)
+	}
+	return int16(-32768) | (Decode5bits(s[0]) << 10) | (Decode5bits(s[1]) << 5) | Decode5bits(s[2])
 }
