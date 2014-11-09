@@ -10,15 +10,15 @@ from go import github.com/strickyak/redhed as rh
 def Usage():
   fmt.Fprintf(os.Stderr, """
     Usage:
-      rh e password infilePlain outfileEncrypted # Encrypt
-      rh d password infileEncrypted outfilePlain # Decrypt
+      rh e keyid password infilePlain outfileEncrypted # Encrypt
+      rh d keyid password infileEncrypted outfilePlain # Decrypt
 """)
   os.Exit(13)
 
 def main(args):
-  if len(args) == 4:
-    cmd, pw, src, dst = args
-    key = rh.NewKey(0, sha256.Sum256(pw))
+  if len(args) == 5:
+    cmd, id, pw, src, dst = args
+    key = rh.NewKey(id, sha256.Sum256(pw))
 
     if cmd == 'e': # encrypt
       r = os.Open(src)
@@ -42,9 +42,9 @@ def main(args):
           r.Close()
       return
 
-  if len(args) == 3:
-    cmd, key, p = args
-    key = rh.NewKey(0, sha256.Sum256(pw))
+  if len(args) == 4:
+    cmd, id, key, p = args
+    key = rh.NewKey(id, sha256.Sum256(pw))
 
     if cmd == 'E': # Encrypt filename.
       p = path.Clean(p)

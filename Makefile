@@ -6,7 +6,7 @@ rh/rh : rh.ry
 test:
 	python ../rye/rye.py run test1.ry
 	python ../rye/rye.py run test2.ry
-	set -x ; expr foo/bar/baz = $$(rh/rh D xyzzy $$(rh/rh E xyzzy foo/bar/baz))
+	set -x ; expr foo/bar/baz = $$(rh/rh D foo xyzzy $$(rh/rh E foo xyzzy foo/bar/baz))
 	echo OKAY redhed/Makefile
 
 clean:

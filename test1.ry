@@ -73,7 +73,7 @@ must rh.DecodeKeyID('zaa') == -32768 + 32*32*25
 for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
 
   F = '__test1.tmp'
-  key = rh.NewKey(42, byt([x for x in range(32)]))
+  key = rh.NewKey('TMP', byt([x for x in range(32)]))
   fd = os.Create(F)
   w = rh.NewWriter(fd, key, path, 1234567890)
   w.Write(data)

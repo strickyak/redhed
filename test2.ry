@@ -1,6 +1,6 @@
 from go import github.com/strickyak/redhed as rh
 
-key = rh.NewKey(0, 'xnmbcznxbcnzbcmnzxbcmbzcnmzbxnmc')
+key = rh.NewKey('31415', 'xnmbcznxbcnzbcmnzxbcmbzcnmzbxnmc')
 
 f1 = '0'
 f2 = '_home_foo_gocode_src_github.com_strickyak_redhed'

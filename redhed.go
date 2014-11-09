@@ -19,7 +19,7 @@ import (
 )
 
 // We choose these:
-const Magic = 52022
+const Magic = 32021  // od -c:  0000000 025   }
 
 var Ian = binary.LittleEndian
 
@@ -59,15 +59,15 @@ func init() {
 }
 
 type Key struct {
-	ID  uint16
+	ID  int16
 	PW  []byte // Delete this later.
 	AES cipher.Block
 	GCM cipher.AEAD
 }
 
 type IVHead struct {
-	Magic uint16   // 0
-	KeyID uint16   // 2
+	Magic int16    // 0
+	KeyID int16    // 2
 	Nonce [12]byte // 4
 } // 16
 
@@ -193,9 +193,9 @@ func (h *Holder) Bytes() []byte {
 	return z.Bytes()
 }
 
-func NewKey(id uint16, pw []byte) *Key {
+func NewKey(id string, pw []byte) *Key {
 	var err error
-	z := &Key{ID: id, PW: pw}
+	z := &Key{ID: DecodeKeyID(id), PW: pw}
 	z.AES, err = aes.NewCipher(pw)
 	if err != nil {
 		log.Panicln(err)
@@ -421,10 +421,18 @@ func EncryptFilename(name string, key *Key) string {
 	bits = append(bits, nonce...)
 	bits = append(bits, blocks...)
 	dark := base64.URLEncoding.EncodeToString(bits)
-	return dark
+	return dark + "." + EncodeKeyID(key.ID)
 }
 
 func DecryptFilename(dark string, key *Key) string {
+	i := strings.IndexByte(dark, '.')
+	if i > 0 {
+		id := DecodeKeyID(dark[i+1:])
+		if id != key.ID {
+			log.Panicf("DecryptFilename: Wrong key: got %d want %d", key.ID, id)
+		}
+		dark = dark[:i]
+	}
 	x, err := base64.URLEncoding.DecodeString(dark)
 	if err != nil {
 		log.Panicln(err)
@@ -479,7 +487,13 @@ func EncodeKeyID(n int16) string {
 func DecodeKeyID(s string) int16 {
 	n, err := strconv.Atoi(s)
 	if err == nil {
+		if n < 0 || n > 32767 {
+			panic("DecodeKeyID: Bad ASCII integer: " + s)
+		}
 		return int16(n)
+	}
+	if len(s) != 3 {
+		panic("DecodeKeyID: Bad non- ASCII integer: " + s)
 	}
 	return int16(-32768) | (Decode5bits(s[0]) << 10) | (Decode5bits(s[1]) << 5) | Decode5bits(s[2])
 }
