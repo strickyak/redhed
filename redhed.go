@@ -19,7 +19,7 @@ import (
 )
 
 // We choose these:
-const Magic = 32021  // od -c:  0000000 025   }
+const Magic = 32021 // od -c:  0000000 025   }
 
 var Ian = binary.LittleEndian
 
@@ -421,19 +421,21 @@ func EncryptFilename(name string, key *Key) string {
 	bits = append(bits, nonce...)
 	bits = append(bits, blocks...)
 	dark := base64.URLEncoding.EncodeToString(bits)
-	return dark + "." + EncodeKeyID(key.ID)
+	return "^" + EncodeKeyID(key.ID) + "^" + dark
 }
 
 func DecryptFilename(dark string, key *Key) string {
-	i := strings.IndexByte(dark, '.')
-	if i > 0 {
-		id := DecodeKeyID(dark[i+1:])
-		if id != key.ID {
-			log.Panicf("DecryptFilename: Wrong key: got %d want %d", key.ID, id)
-		}
-		dark = dark[:i]
+	vec := strings.Split(dark, "^")
+	if len(vec) != 3 || len(vec[0]) != 0 {
+		panic("DecryptFilename: Bad input name: " + dark)
 	}
-	x, err := base64.URLEncoding.DecodeString(dark)
+
+	id := DecodeKeyID(vec[1])
+	if id != key.ID {
+		log.Panicf("DecryptFilename: Wrong key: got %d want %d", key.ID, id)
+	}
+
+	x, err := base64.URLEncoding.DecodeString(vec[2])
 	if err != nil {
 		log.Panicln(err)
 	}
