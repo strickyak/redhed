@@ -7,6 +7,8 @@ from go import strings
 
 from go import github.com/strickyak/redhed as rh
 
+from ../aphid import flag
+
 def Usage():
   fmt.Fprintf(os.Stderr, """
     Usage:
@@ -16,6 +18,7 @@ def Usage():
   os.Exit(13)
 
 def main(args):
+  args = flag.Munch(args)
   if len(args) == 5:
     cmd, id, pw, src, dst = args
     key = rh.NewKey(id, sha256.Sum256(pw))
