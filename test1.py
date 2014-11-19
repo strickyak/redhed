@@ -36,22 +36,22 @@ must h2.Payload == byt([x+9 for x in range(rh.PayloadLenFromPath('github.com/str
 
 ########################################
 
-must rh.Encode5bits(0) == ord('A')
-must rh.Encode5bits(1) == ord('B')
-must rh.Encode5bits(25) == ord('Z')
-must rh.Encode5bits(32 + 0) == ord('A')
-must rh.Encode5bits(32*5 + 1) == ord('B')
-must rh.Encode5bits(32*32*2 + 25) == ord('Z')
-must except rh.Encode5bits(26)
+must rh.Encode5bits(1) == ord('A')
+must rh.Encode5bits(2) == ord('B')
+must rh.Encode5bits(26) == ord('Z')
+must rh.Encode5bits(32 + 1) == ord('A')
+must rh.Encode5bits(32*5 + 2) == ord('B')
+must rh.Encode5bits(32*32*2 + 26) == ord('Z')
+must except rh.Encode5bits(0)
 must except rh.Encode5bits(27)
 must except rh.Encode5bits(31)
 
-must rh.Decode5bits(ord('A')) == 0
-must rh.Decode5bits(ord('B')) == 1
-must rh.Decode5bits(ord('Z')) == 25
-must rh.Decode5bits(ord('a')) == 0
-must rh.Decode5bits(ord('b')) == 1
-must rh.Decode5bits(ord('z')) == 25
+must rh.Decode5bits(ord('A')) == 1
+must rh.Decode5bits(ord('B')) == 2
+must rh.Decode5bits(ord('Z')) == 26
+must rh.Decode5bits(ord('a')) == 1
+must rh.Decode5bits(ord('b')) == 2
+must rh.Decode5bits(ord('z')) == 26
 must except rh.Decode5bits(ord('0'))
 must except rh.Decode5bits(ord('5'))
 must except rh.Decode5bits(ord('~'))
@@ -60,13 +60,22 @@ must except rh.Decode5bits(13)
 
 must rh.DecodeKeyID('99') == 99
 must rh.DecodeKeyID('32767') == 32767
-must rh.DecodeKeyID('AAA') == -32768
-must rh.DecodeKeyID('AAB') == -32768 + 1
-must rh.DecodeKeyID('ABA') == -32768 + 32
-must rh.DecodeKeyID('BAA') == -32768 + 32*32
-must rh.DecodeKeyID('aaz') == -32768 + 25
-must rh.DecodeKeyID('aza') == -32768 + 32*25
-must rh.DecodeKeyID('zaa') == -32768 + 32*32*25
+
+say rh.DecodeKeyID('AAA')
+say rh.DecodeKeyID('AAB')
+say rh.DecodeKeyID('ABA')
+say rh.DecodeKeyID('BAA')
+say rh.DecodeKeyID('aaz')
+say rh.DecodeKeyID('aza')
+say rh.DecodeKeyID('zaa')
+
+must rh.DecodeKeyID('AAA') == -32768 + 1*32*32 + 1*32 + 1
+must rh.DecodeKeyID('AAB') == -32768 + 1*32*32 + 1*32 + 2
+must rh.DecodeKeyID('ABA') == -32768 + 1*32*32 + 2*32 + 1
+must rh.DecodeKeyID('BAA') == -32768 + 2*32*32 + 1*32 + 1
+must rh.DecodeKeyID('aaz') == -32768 + 1*32*32 + 1*32 + 26
+must rh.DecodeKeyID('aza') == -32768 + 1*32*32 + 26*32 + 1
+must rh.DecodeKeyID('zaa') == -32768 + 26*32*32 + 1*32 + 1
 
 ########################################
 

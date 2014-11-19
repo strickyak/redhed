@@ -19,7 +19,7 @@ import (
 )
 
 // We choose these:
-const Magic = 32021 // od -c:  0000000 025   }
+const Magic = 32021 // od -c: "0000000 025   }"
 
 var Ian = binary.LittleEndian
 
@@ -450,11 +450,11 @@ func DecryptFilename(dark string, key *Key) string {
 	return strings.TrimRight(string(x[12:]), "\000")
 }
 
-// Encode5bits encodes the lowest 5 bits as a letter 'A'..'Z', but values 26..31 panic.
+// Encode5bits encodes the lowest 5 bits as a letter 'A'..'Z', but values {0, 27..31} panic.
 func Encode5bits(n int16) byte {
-	n &= 31
-	if n < 26 {
-		return byte(n + 'A') // 0 .. 25 -> 'A' .. 'Z'
+	n &= 31  // Use 5 low bits.
+	if 1 <= n && n <= 26 {
+		return byte(n - 1 + 'A') // 1 .. 26 -> 'A' .. 'Z'
 	}
 	panic(fmt.Sprintf("Encode5bits: Bad input %d.", n))
 }
@@ -462,10 +462,10 @@ func Encode5bits(n int16) byte {
 // Only defined on A..Z (case independant)
 func Decode5bits(c byte) int16 {
 	if 'A' <= c && c <= 'Z' {
-		return int16(c) - 'A'
+		return int16(c) - 'A' + 1
 	}
 	if 'a' <= c && c <= 'z' {
-		return int16(c) - 'a'
+		return int16(c) - 'a' + 1
 	}
 	panic(fmt.Sprintf("Decode5bits: Bad byte %d.", c))
 }
