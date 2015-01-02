@@ -1,5 +1,5 @@
-from go import io/ioutil
-from go import os
+from go import io/ioutil, os
+from go import crypto/md5
 
 from go import github.com/strickyak/redhed as rh
 
@@ -7,7 +7,7 @@ from go import github.com/strickyak/redhed as rh
 sectorSize = 4096
 gcmOverhead = 16
 headLen = 16
-middleLen = 20
+middleLen = 36
 
 path = 'alpha/beta/gamma'
 must rh.PayloadLenFromPath(path) == sectorSize - headLen - middleLen - len(path) - gcmOverhead
@@ -80,11 +80,12 @@ must rh.DecodeKeyID('zaa') == -32768 + 26*32*32 + 1*32 + 1
 ########################################
 
 for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
+  csum = md5.Sum(data)
 
   F = '__test1.tmp'
   key = rh.NewKey('TMP', byt([x for x in range(32)]))
   fd = os.Create(F)
-  w = rh.NewWriter(fd, key, path, 1234567890)
+  w = rh.NewWriter(fd, key, path, 1234567890, len(data), csum)
   w.Write(data)
   w.Close()
   fd.Close()
@@ -98,6 +99,11 @@ for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
     must str(z)[-99:] == str(data)[-99:]
   else:
     must str(z) == str(data)
+
+  t9, s9, h9 = r.TimeSizeHash()
+  must t9 == 1234567890
+  must s9 == len(data)
+  must h9 == csum
   r.Close()
   fd.Close()
 

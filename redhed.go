@@ -32,7 +32,7 @@ const GcmOverhead = 16
 const ChunkLen = 4096
 const HeadLen = 16
 const EncLen = ChunkLen - HeadLen - GcmOverhead
-const MiddleLen = 20
+const MiddleLen = 36
 const PathAndPayloadLen = EncLen - MiddleLen
 
 const MaxTime = (1 << 48) - 1
@@ -91,14 +91,16 @@ type MiddleBin struct {
 	XSize   uint16 // 10
 	Offset  uint32 // 12
 	XOffset uint16 // 16
+  Hash    [16]byte // 18
 
-	PathLen uint16 // 18
-} // 20
+	PathLen uint16 // 34
+} // 36 was 20
 
 type Holder struct {
 	Time    int64
 	Size    int64
 	Offset  int64
+  Hash    [16]byte
 	Path    string
 	Payload []byte
 }
@@ -131,6 +133,7 @@ func (h *Holder) FromBytes(b []byte) {
 	h.Time = (int64(m.XTime) << 32) + int64(m.Time)
 	h.Size = (int64(m.XSize) << 32) + int64(m.Size)
 	h.Offset = (int64(m.XOffset) << 32) + int64(m.Offset)
+  h.Hash = m.Hash
 	plen := int(m.PathLen)
 
 	bp := make([]byte, plen)
@@ -175,6 +178,7 @@ func (h *Holder) Bytes() []byte {
 	m.XSize = uint16(size >> 32)
 	m.Offset = uint32(offset)
 	m.XOffset = uint16(offset >> 32)
+  m.Hash = h.Hash
 	m.PathLen = uint16(len(path))
 
 	var z bytes.Buffer       // Accumulate result.
@@ -259,13 +263,18 @@ type rReader struct {
 	eof    bool
 	time   int64
 	size   int64
+  hash   [16]byte
 }
 
-func NewReader(fd io.ReaderAt, key *Key) io.ReadCloser {
+func NewReader(fd io.ReaderAt, key *Key) *rReader /* io.ReadCloser */ {
 	return &rReader{
 		fd:  fd,
 		key: key,
 	}
+}
+
+func (o *rReader) TimeSizeHash() (int64, int64, []byte) {
+  return o.time, o.size, o.hash[:]
 }
 
 type rWriter struct {
@@ -273,18 +282,22 @@ type rWriter struct {
 	key  *Key
 	path string
 	time int64
+	size int64
+	hash [16]byte
 
 	payLen int64
 	buf    []byte
 	sector int64
 }
 
-func NewWriter(fd io.WriterAt, key *Key, path string, time int64) io.WriteCloser {
+func NewWriter(fd io.WriterAt, key *Key, path string, time int64, size int64, hash [16]byte) io.WriteCloser {
 	z := &rWriter{
 		fd:     fd,
 		key:    key,
 		path:   path,
 		time:   time,
+		size:   size,
+		hash:   hash,
 		payLen: PayloadLenFromPath(path),
 	}
 	return z
@@ -304,8 +317,9 @@ func (o *rWriter) pushWholeSectors() {
 		off := o.sector * o.payLen
 		h := Holder{
 			Time:    o.time,
-			Size:    -1,
+			Size:    o.size,
 			Offset:  off,
+			Hash:    o.hash,
 			Path:    o.path,
 			Payload: o.buf[:o.payLen],
 		}
@@ -318,10 +332,14 @@ func (o *rWriter) pushFinal() {
 	o.pushWholeSectors() // Leaves 1 to o.payLen bytes in o.buf, or even 0 if file sz == 0.
 	off := o.sector * o.payLen
 	sz := off + Len(o.buf)
+  if sz != o.size {
+    log.Panicf("Got size %d, but declared size %d", sz, o.size)
+  }
 	o.buf = append(o.buf, make([]byte, o.payLen-Len(o.buf))...) // zero pad.
 	h := Holder{
 		Time:    o.time,
-		Size:    sz,
+		Size:    o.size,
+		Hash:    o.hash,
 		Offset:  off,
 		Path:    o.path,
 		Payload: o.buf,
@@ -351,6 +369,7 @@ func (o *rReader) Read(p []byte) (int, error) {
 			h := o.ReadAndDecryptSector()
 			o.time = h.Time
 			o.size = h.Size
+			o.hash = h.Hash
 			o.buf = h.Payload
 			if h.Size != 0xFFFFffffFFFF {
 				gap := h.Size - h.Offset
