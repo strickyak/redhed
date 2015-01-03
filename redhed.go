@@ -85,13 +85,13 @@ func (o *IVHead) Bytes() []byte {
 }
 
 type MiddleBin struct {
-	Time    uint32 // 0
-	XTime   uint16 // 4
-	Size    uint32 // 6
-	XSize   uint16 // 10
-	Offset  uint32 // 12
-	XOffset uint16 // 16
-  Hash    [16]byte // 18
+	Time    uint32   // 0
+	XTime   uint16   // 4
+	Size    uint32   // 6
+	XSize   uint16   // 10
+	Offset  uint32   // 12
+	XOffset uint16   // 16
+	Hash    [16]byte // 18
 
 	PathLen uint16 // 34
 } // 36 was 20
@@ -100,7 +100,7 @@ type Holder struct {
 	Time    int64
 	Size    int64
 	Offset  int64
-  Hash    [16]byte
+	Hash    [16]byte
 	Path    string
 	Payload []byte
 }
@@ -133,7 +133,7 @@ func (h *Holder) FromBytes(b []byte) {
 	h.Time = (int64(m.XTime) << 32) + int64(m.Time)
 	h.Size = (int64(m.XSize) << 32) + int64(m.Size)
 	h.Offset = (int64(m.XOffset) << 32) + int64(m.Offset)
-  h.Hash = m.Hash
+	h.Hash = m.Hash
 	plen := int(m.PathLen)
 
 	bp := make([]byte, plen)
@@ -178,7 +178,7 @@ func (h *Holder) Bytes() []byte {
 	m.XSize = uint16(size >> 32)
 	m.Offset = uint32(offset)
 	m.XOffset = uint16(offset >> 32)
-  m.Hash = h.Hash
+	m.Hash = h.Hash
 	m.PathLen = uint16(len(path))
 
 	var z bytes.Buffer       // Accumulate result.
@@ -263,7 +263,7 @@ type rReader struct {
 	eof    bool
 	time   int64
 	size   int64
-  hash   [16]byte
+	hash   [16]byte
 }
 
 func NewReader(fd io.ReaderAt, key *Key) *rReader /* io.ReadCloser */ {
@@ -274,7 +274,7 @@ func NewReader(fd io.ReaderAt, key *Key) *rReader /* io.ReadCloser */ {
 }
 
 func (o *rReader) TimeSizeHash() (int64, int64, []byte) {
-  return o.time, o.size, o.hash[:]
+	return o.time, o.size, o.hash[:]
 }
 
 type rWriter struct {
@@ -332,9 +332,9 @@ func (o *rWriter) pushFinal() {
 	o.pushWholeSectors() // Leaves 1 to o.payLen bytes in o.buf, or even 0 if file sz == 0.
 	off := o.sector * o.payLen
 	sz := off + Len(o.buf)
-  if sz != o.size {
-    log.Panicf("Got size %d, but declared size %d", sz, o.size)
-  }
+	if sz != o.size {
+		log.Panicf("Got size %d, but declared size %d", sz, o.size)
+	}
 	o.buf = append(o.buf, make([]byte, o.payLen-Len(o.buf))...) // zero pad.
 	h := Holder{
 		Time:    o.time,
@@ -414,6 +414,13 @@ func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 }
 
 func EncryptFilename(name string, key *Key) string {
+	// As a bit of a sanity check, forbid ctrl chars in name.
+	for _, ch := range name {
+		if ch < 32 {
+			log.Panicf("EncryptFilename: Bad char in filename, ch = %d", ch)
+		}
+	}
+
 	// Create random 96-byt nonce, for 128-bit IV.
 	nonce := make([]byte, 12)
 	c, err := rand.Read(nonce)
@@ -440,21 +447,11 @@ func EncryptFilename(name string, key *Key) string {
 	bits = append(bits, nonce...)
 	bits = append(bits, blocks...)
 	dark := base64.URLEncoding.EncodeToString(bits)
-	return "^" + EncodeKeyID(key.ID) + "^" + dark
+	return dark
 }
 
 func DecryptFilename(dark string, key *Key) string {
-	vec := strings.Split(dark, "^")
-	if len(vec) != 3 || len(vec[0]) != 0 {
-		panic("DecryptFilename: Bad input name: " + dark)
-	}
-
-	id := DecodeKeyID(vec[1])
-	if id != key.ID {
-		log.Panicf("DecryptFilename: Wrong key: got %d want %d", key.ID, id)
-	}
-
-	x, err := base64.URLEncoding.DecodeString(vec[2])
+	x, err := base64.URLEncoding.DecodeString(dark)
 	if err != nil {
 		log.Panicln(err)
 	}
@@ -466,12 +463,20 @@ func DecryptFilename(dark string, key *Key) string {
 	de := cipher.NewCBCDecrypter(key.AES, iv)
 	de.CryptBlocks(x[12:], x[12:])
 
-	return strings.TrimRight(string(x[12:]), "\000")
+	name := strings.TrimRight(string(x[12:]), "\000")
+	// As a bit of a sanity check, forbid ctrl chars in name.
+	for _, ch := range name {
+		if ch < 32 {
+			log.Panicf("DecryptFilename: Bad char in filename, ch = %d", ch)
+		}
+	}
+
+	return name
 }
 
 // Encode5bits encodes the lowest 5 bits as a letter 'A'..'Z', but values {0, 27..31} panic.
 func Encode5bits(n int16) byte {
-	n &= 31  // Use 5 low bits.
+	n &= 31 // Use 5 low bits.
 	if 1 <= n && n <= 26 {
 		return byte(n - 1 + 'A') // 1 .. 26 -> 'A' .. 'Z'
 	}
