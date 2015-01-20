@@ -1,5 +1,5 @@
 from go import io/ioutil, os
-from go import crypto/md5
+from go import crypto/md5, math/rand
 
 from go import github.com/strickyak/redhed as rh
 
@@ -104,8 +104,28 @@ for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
   must t9 == 1234567890
   must s9 == len(data)
   must h9 == csum
+
+  if len(z) > 10:
+    # Test ReadAt.
+    for off in [i for i in range(10)] + [10-i for i in range(10)] + [rand.Intn(len(z)) for i in range(10)]:
+      bb = mkbyt(1)
+      c = r.ReadAt(bb, off)
+      say off, bb, c, z[:30]
+      must c == 1
+      must bb == z[off:off+1]
+      must bb[0] == z[off]
+
+    # Test Seek.
+    for off in [i for i in range(10)] + [10-i for i in range(10)] + [rand.Intn(len(z)) for i in range(10)]:
+      bb = mkbyt(1)
+      r.Seek(off, 0)
+      c = r.Read(bb)
+      say off, bb, c, z[:30]
+      must c == 1
+      must bb == z[off:off+1]
+      must bb[0] == z[off]
+
   r.Close()
-  fd.Close()
 
 #########################################
 

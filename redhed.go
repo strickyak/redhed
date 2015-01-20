@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -266,11 +267,15 @@ type rReader struct {
 	hash   [16]byte
 }
 
-func NewReader(fd io.ReaderAt, key *Key) *rReader /* io.ReadCloser */ {
-	return &rReader{
+// NewReader returns ReadCloser, ReadSeeker, and ReaderAt.
+func NewReader(fd io.ReaderAt, key *Key) *rReader {
+	o := &rReader{
 		fd:  fd,
 		key: key,
 	}
+	o.Pull()
+	println("rReader::New", o.fd)
+	return o
 }
 
 func (o *rReader) TimeSizeHash() (int64, int64, []byte) {
@@ -349,8 +354,63 @@ func (o *rWriter) pushFinal() {
 }
 
 func (o *rReader) Close() error {
+	println("rReader::Close", o.fd)
+	if rc, ok := o.fd.(io.ReadCloser); ok {
+		rc.Close()
+	}
 	return nil
 }
+func (o *rReader) Seek(offset int64, whence int) (int64, error) {
+	println("rReader::Seek", offset, whence, o.fd)
+	var off int64
+	switch whence {
+	case 0:
+		off = offset
+	case 1:
+		off = o.pos + offset
+	case 2:
+		off = o.size + offset
+	default:
+		return 0, errors.New("Bad whence")
+	}
+
+	if off < 0 {
+		return 0, errors.New("Negative offset")
+	}
+
+	if off == 0 {
+		*o = *NewReader(o.fd, o.key)
+		return 0, nil
+	}
+
+	bb := make([]byte, 1)
+	_, err := o.ReadAt(bb, off-1)
+	if err != nil {
+		return 0, err
+	}
+	return off, nil
+}
+
+func (o *rReader) ReadAt(p []byte, off int64) (n int, err error) {
+	if off != o.pos {
+		// Stupid but easy.  TODO: Better.
+		*o = *NewReader(o.fd, o.key)
+		for o.pos < off {
+			// Read and throw away bytes until o.pos == off.
+			gap := off - o.pos
+			if gap > ChunkLen {
+				gap = ChunkLen
+			}
+			bb := make([]byte, gap)
+			c, err := o.Read(bb)
+			if err != nil && c == 0 {
+				return 0, err
+			}
+		}
+	}
+	return o.Read(p)
+}
+
 func (o *rReader) Read(p []byte) (int, error) {
 	yet := len(p) // Num bytes yet to do.
 	done := 0
@@ -360,30 +420,35 @@ func (o *rReader) Read(p []byte) (int, error) {
 			// Copy returns the number of elements copied,
 			// which will be the minimum of len(src) and len(dst).
 			c := copy(p[done:], o.buf)
+			o.pos += int64(c)
 			o.buf = o.buf[c:]
 			yet -= c
 			done += c
 		} else if o.eof {
 			break
 		} else {
-			h := o.ReadAndDecryptSector()
-			o.time = h.Time
-			o.size = h.Size
-			o.hash = h.Hash
-			o.buf = h.Payload
-			if h.Size != 0xFFFFffffFFFF {
-				gap := h.Size - h.Offset
-				if gap <= Len(o.buf) {
-					o.buf = o.buf[:gap]
-					o.eof = true
-				}
-			}
+			o.Pull()
 		}
 	}
 	if done == 0 && o.eof {
 		return 0, io.EOF
 	}
 	return done, nil
+}
+
+func (o *rReader) Pull() {
+	h := o.ReadAndDecryptSector()
+	o.time = h.Time
+	o.size = h.Size
+	o.hash = h.Hash
+	o.buf = h.Payload
+	if h.Size != 0xFFFFffffFFFF {
+		gap := h.Size - h.Offset
+		if gap <= Len(o.buf) {
+			o.buf = o.buf[:gap]
+			o.eof = true
+		}
+	}
 }
 
 func (o *rReader) ReadAndDecryptSector() (h *Holder) {
