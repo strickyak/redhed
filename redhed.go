@@ -8,13 +8,19 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
+	"os"
+	//P "path"
+	F "path/filepath"
 	"strconv"
 	"strings"
 )
@@ -478,6 +484,39 @@ func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 	}
 }
 
+// GetEncryptedPath returns an encrypted path relative to topname, using prefix "d^.../d^....../f^.../r^...", using existing directory names if available.
+func GetEncryptedPath(topname, pathname string, key *Key) string {
+  var z []string
+  t := topname
+  w := strings.Split(pathname, "/")
+  n := len(w)
+  for i, e := range w {
+    pre := "d^"
+    switch i {
+    case n-2: pre = "f^"
+    case n-1: pre = "r^"
+    }
+
+    x := ""
+    gg, err := F.Glob(F.Join(t, pre+"*"))
+    if err != nil { panic(err) }
+    for _, g := range gg {
+      gb := F.Base(g)[2:]
+      if DecryptFilename(gb, key) == e {
+        x = gb
+        break
+      }
+    }
+    if x == "" {
+      x = EncryptFilename(e, key)
+    }
+    z = append(z, pre + x)
+    t = F.Join(t, pre + x)
+  }
+
+  return strings.Join(z, "/")
+}
+
 func EncryptFilename(name string, key *Key) string {
 	// As a bit of a sanity check, forbid ctrl chars in name.
 	for _, ch := range name {
@@ -587,4 +626,76 @@ func DecodeKeyID(s string) int16 {
 		panic("DecodeKeyID: Bad non- ASCII integer: " + s)
 	}
 	return int16(-32768) | (Decode5bits(s[0]) << 10) | (Decode5bits(s[1]) << 5) | Decode5bits(s[2])
+}
+
+type NewFileWriter struct {
+	key    *Key
+	tmpkey    *Key
+  tmpfd      *os.File
+  hasher   hash.Hash
+  w     io.Writer
+
+	Time   int64
+	Size   int64
+	Hash   [16]byte
+  Topname string
+  tempname string
+  getname func (*NewFileWriter) string
+}
+
+func WriteNewFile(topname string, key *Key, getname func (*NewFileWriter) string) *NewFileWriter {
+  tmppw := make([]byte, 32)
+  rand.Read(tmppw)
+  tmpkey := NewKey("0", tmppw)
+
+  tempbb := make([]byte, 8)
+  rand.Read(tempbb)
+  temp := hex.EncodeToString(tempbb)
+  tempname := F.Join(topname, "__tmp." + temp)
+  tmpfd, err := os.OpenFile(tempname, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0700)
+  if err != nil { panic(err) }
+  err = os.Remove(tempname)
+  if err != nil { panic(err) }
+  w := NewWriter(tmpfd, tmpkey, "?", 0/*Time*/, 0/*Size*/, *new([16]byte)/*Hash*/)
+
+  z := &NewFileWriter{
+    Topname: topname,
+    tempname: tempname,
+    hasher:  md5.New(),
+    tmpfd: tmpfd,
+    tmpkey: tmpkey,
+    key: key,
+    w: w,
+    getname: getname,
+  }
+  return z
+}
+
+func (o *NewFileWriter) Write(p []byte) (int, error) {
+  n, err := o.tmpfd.Write(p)
+  o.Size += int64(n)
+  o.hasher.Write(p[:n])
+  return n, err
+}
+
+func (o *NewFileWriter) Close() error {
+  copy(o.Hash[:], o.hasher.Sum(nil))
+  println("NewFileWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
+  // o.tmpfd.Close()
+  // r := NewReader(o.tmpfd, o.key)
+  r := o.tmpfd
+  r.Seek(0, 0)
+
+  pathname := o.getname(o)
+  dest := F.Join(o.Topname, GetEncryptedPath(o.Topname, pathname, o.key))
+  println("NewFileWriter::Close: dest:", dest)
+  os.MkdirAll(F.Dir(dest), 0777)
+  wfd, err := os.Create(dest)
+  if err != nil { return err }
+  w := NewWriter(wfd, o.key, pathname, o.Time, o.Size, o.Hash)
+  io.Copy(w, r)
+  w.Close()
+  r.Close()
+  println("NewFileWriter::Close: OKAY: ", dest)
+  return nil
 }

@@ -1,4 +1,4 @@
-from go import io/ioutil, os
+from go import io/ioutil, os, time
 from go import crypto/md5, math/rand
 
 from go import github.com/strickyak/redhed as rh
@@ -128,5 +128,16 @@ for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
   r.Close()
 
 #########################################
+
+def getname(path):
+  def inner(w):
+    t = time.Now().Unix()
+    return '%s/r.%011d.X.%d.%d' % (path, t, t, w.Size)
+  return inner
+
+key = rh.NewKey('TMP', byt([x for x in range(32)]))
+w = rh.WriteNewFile('/tmp', key, getname('one/two/three/four'))
+w.Write(byt([x for x in range(8888)]))
+w.Close()
 
 print "redhed/test1 OKAY."
