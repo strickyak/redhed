@@ -486,35 +486,39 @@ func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 
 // GetEncryptedPath returns an encrypted path relative to topname, using prefix "d^.../d^....../f^.../r^...", using existing directory names if available.
 func GetEncryptedPath(topname, pathname string, key *Key) string {
-  var z []string
-  t := topname
-  w := strings.Split(pathname, "/")
-  n := len(w)
-  for i, e := range w {
-    pre := "d^"
-    switch i {
-    case n-2: pre = "f^"
-    case n-1: pre = "r^"
-    }
+	var z []string
+	t := topname
+	w := strings.Split(pathname, "/")
+	n := len(w)
+	for i, e := range w {
+		pre := "d^"
+		switch i {
+		case n - 2:
+			pre = "f^"
+		case n - 1:
+			pre = "r^"
+		}
 
-    x := ""
-    gg, err := F.Glob(F.Join(t, pre+"*"))
-    if err != nil { panic(err) }
-    for _, g := range gg {
-      gb := F.Base(g)[2:]
-      if DecryptFilename(gb, key) == e {
-        x = gb
-        break
-      }
-    }
-    if x == "" {
-      x = EncryptFilename(e, key)
-    }
-    z = append(z, pre + x)
-    t = F.Join(t, pre + x)
-  }
+		x := ""
+		gg, err := F.Glob(F.Join(t, pre+"*"))
+		if err != nil {
+			panic(err)
+		}
+		for _, g := range gg {
+			gb := F.Base(g)[2:]
+			if DecryptFilename(gb, key) == e {
+				x = gb
+				break
+			}
+		}
+		if x == "" {
+			x = EncryptFilename(e, key)
+		}
+		z = append(z, pre+x)
+		t = F.Join(t, pre+x)
+	}
 
-  return strings.Join(z, "/")
+	return strings.Join(z, "/")
 }
 
 func EncryptFilename(name string, key *Key) string {
@@ -628,74 +632,101 @@ func DecodeKeyID(s string) int16 {
 	return int16(-32768) | (Decode5bits(s[0]) << 10) | (Decode5bits(s[1]) << 5) | Decode5bits(s[2])
 }
 
-type NewFileWriter struct {
+type StreamWriter struct {
 	key    *Key
-	tmpkey    *Key
-  tmpfd      *os.File
-  hasher   hash.Hash
-  w     io.Writer
+	tmpkey *Key
+	tmpfd  *os.File
+	hasher hash.Hash
+	w      io.Writer
 
-	Time   int64
-	Size   int64
-	Hash   [16]byte
-  Topname string
-  tempname string
-  getname func (*NewFileWriter) string
+	Time     int64
+	Size     int64
+	Hash     [16]byte
+	Topname  string
+	tempname string
+	getname  func(*StreamWriter) string
 }
 
-func WriteNewFile(topname string, key *Key, getname func (*NewFileWriter) string) *NewFileWriter {
-  tmppw := make([]byte, 32)
-  rand.Read(tmppw)
-  tmpkey := NewKey("0", tmppw)
+// NewStreamWriter() gives you a Writer that you can write and close, before you need to decide the filaname.
+// Also it lets you put the correct final hash & size in each redhed block.
+func NewStreamWriter(topname string, key *Key, getname func(*StreamWriter) string) *StreamWriter {
+	tmppw := make([]byte, 32)
+	rand.Read(tmppw)
+	tmpkey := NewKey("0", tmppw)
 
-  tempbb := make([]byte, 8)
-  rand.Read(tempbb)
-  temp := hex.EncodeToString(tempbb)
-  tempname := F.Join(topname, "__tmp." + temp)
-  tmpfd, err := os.OpenFile(tempname, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0700)
-  if err != nil { panic(err) }
-  err = os.Remove(tempname)
-  if err != nil { panic(err) }
-  w := NewWriter(tmpfd, tmpkey, "?", 0/*Time*/, 0/*Size*/, *new([16]byte)/*Hash*/)
+	tempbb := make([]byte, 8)
+	rand.Read(tempbb)
+	temp := hex.EncodeToString(tempbb)
+	tempname := F.Join(topname, "__tmp."+temp)
+	tmpfd, err := os.OpenFile(tempname, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		panic(err)
+	}
+	err = os.Remove(tempname)
+	if err != nil {
+		panic(err)
+	}
+	w := NewWriter(tmpfd, tmpkey, "?", 0 /*Time*/, 0 /*Size*/, *new([16]byte) /*Hash*/)
 
-  z := &NewFileWriter{
-    Topname: topname,
-    tempname: tempname,
-    hasher:  md5.New(),
-    tmpfd: tmpfd,
-    tmpkey: tmpkey,
-    key: key,
-    w: w,
-    getname: getname,
-  }
-  return z
+	z := &StreamWriter{
+		Topname:  topname,
+		tempname: tempname,
+		hasher:   md5.New(),
+		tmpfd:    tmpfd,
+		tmpkey:   tmpkey,
+		key:      key,
+		w:        w,
+		getname:  getname,
+	}
+	return z
 }
 
-func (o *NewFileWriter) Write(p []byte) (int, error) {
-  n, err := o.tmpfd.Write(p)
-  o.Size += int64(n)
-  o.hasher.Write(p[:n])
-  return n, err
+func (o *StreamWriter) Write(p []byte) (int, error) {
+	n, err := o.tmpfd.Write(p)
+	o.Size += int64(n)
+	o.hasher.Write(p[:n])
+	return n, err
 }
 
-func (o *NewFileWriter) Close() error {
-  copy(o.Hash[:], o.hasher.Sum(nil))
-  println("NewFileWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
-  // o.tmpfd.Close()
-  // r := NewReader(o.tmpfd, o.key)
-  r := o.tmpfd
-  r.Seek(0, 0)
+func (o *StreamWriter) Close() (err error) {
+	copy(o.Hash[:], o.hasher.Sum(nil))
+	println("StreamWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
+	r := o.tmpfd
+	r.Seek(0, 0)
+	var dest string
 
-  pathname := o.getname(o)
-  dest := F.Join(o.Topname, GetEncryptedPath(o.Topname, pathname, o.key))
-  println("NewFileWriter::Close: dest:", dest)
-  os.MkdirAll(F.Dir(dest), 0777)
-  wfd, err := os.Create(dest)
-  if err != nil { return err }
-  w := NewWriter(wfd, o.key, pathname, o.Time, o.Size, o.Hash)
-  io.Copy(w, r)
-  w.Close()
-  r.Close()
-  println("NewFileWriter::Close: OKAY: ", dest)
-  return nil
+	defer func() {
+		bad := recover()
+		r.Close()
+		if bad == nil {
+			log.Printf("StreamWriter::Close: OKAY: ", dest)
+			err = nil
+		} else {
+			log.Panicf("StreamWriter::Close: ERROR:  dest=%q  err=%v", dest, bad)
+		}
+	}()
+
+	pathname := o.getname(o)
+	if o.key == nil {
+		dest = F.Join(o.Topname, pathname)
+		os.MkdirAll(F.Dir(dest), 0777)
+		w, err := os.Create(dest)
+		if err != nil {
+			return err
+		}
+		io.Copy(w, r)
+		w.Close()
+	} else {
+		dest = F.Join(o.Topname, GetEncryptedPath(o.Topname, pathname, o.key))
+		println("StreamWriter::Close: dest:", dest)
+		os.MkdirAll(F.Dir(dest), 0777)
+		wfd, err := os.Create(dest)
+		if err != nil {
+			return err
+		}
+		w := NewWriter(wfd, o.key, pathname, o.Time, o.Size, o.Hash)
+		io.Copy(w, r)
+		w.Close()
+	}
+	return nil
 }

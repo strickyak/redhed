@@ -136,7 +136,7 @@ def getname(path):
   return inner
 
 key = rh.NewKey('TMP', byt([x for x in range(32)]))
-w = rh.WriteNewFile('/tmp', key, getname('one/two/three/four'))
+w = rh.NewStreamWriter('/tmp', key, getname('one/two/three/four'))
 w.Write(byt([x for x in range(8888)]))
 w.Close()
 
