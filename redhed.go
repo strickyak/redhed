@@ -23,6 +23,7 @@ import (
 	F "path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // We choose these:
@@ -92,7 +93,7 @@ func (o *IVHead) Bytes() []byte {
 }
 
 type MiddleBin struct {
-	Time    uint32   // 0
+	Time    uint32   // 0  // TODO: Millis
 	XTime   uint16   // 4
 	Size    uint32   // 6
 	XSize   uint16   // 10
@@ -104,7 +105,7 @@ type MiddleBin struct {
 } // 36 was 20
 
 type Holder struct {
-	Time    int64
+	Time    int64  // TODO: Millis
 	Size    int64
 	Offset  int64
 	Hash    [16]byte
@@ -639,17 +640,17 @@ type StreamWriter struct {
 	hasher hash.Hash
 	w      io.Writer
 
-	Time     int64
+	MTimeMillis     int64
 	Size     int64
 	Hash     [16]byte
 	Topname  string
 	tempname string
-	getname  func(*StreamWriter) string
+	fnGetName  func(*StreamWriter) string
 }
 
 // NewStreamWriter() gives you a Writer that you can write and close, before you need to decide the filaname.
 // Also it lets you put the correct final hash & size in each redhed block.
-func NewStreamWriter(topname string, key *Key, getname func(*StreamWriter) string) *StreamWriter {
+func NewStreamWriter(topname string, key *Key, mtimeMillis int64, fnGetName func(*StreamWriter) string) *StreamWriter {
 	tmppw := make([]byte, 32)
 	rand.Read(tmppw)
 	tmpkey := NewKey("0", tmppw)
@@ -666,8 +667,11 @@ func NewStreamWriter(topname string, key *Key, getname func(*StreamWriter) strin
 	if err != nil {
 		panic(err)
 	}
-	w := NewWriter(tmpfd, tmpkey, "?", 0 /*Time*/, 0 /*Size*/, *new([16]byte) /*Hash*/)
+	w := NewWriter(tmpfd, tmpkey, "?", mtimeMillis, 0 /*Size*/, *new([16]byte) /*Hash*/)
 
+  if mtimeMillis <= 0 {
+    mtimeMillis = time.Now().Unix() * 1000
+  }
 	z := &StreamWriter{
 		Topname:  topname,
 		tempname: tempname,
@@ -675,8 +679,9 @@ func NewStreamWriter(topname string, key *Key, getname func(*StreamWriter) strin
 		tmpfd:    tmpfd,
 		tmpkey:   tmpkey,
 		key:      key,
+		MTimeMillis:      mtimeMillis,
 		w:        w,
-		getname:  getname,
+		fnGetName:  fnGetName,
 	}
 	return z
 }
@@ -706,7 +711,7 @@ func (o *StreamWriter) Close() (err error) {
 		}
 	}()
 
-	pathname := o.getname(o)
+	pathname := o.fnGetName(o)
 	if o.key == nil {
 		dest = F.Join(o.Topname, pathname)
 		os.MkdirAll(F.Dir(dest), 0777)
@@ -724,7 +729,7 @@ func (o *StreamWriter) Close() (err error) {
 		if err != nil {
 			return err
 		}
-		w := NewWriter(wfd, o.key, pathname, o.Time, o.Size, o.Hash)
+		w := NewWriter(wfd, o.key, pathname, o.MTimeMillis, o.Size, o.Hash)
 		io.Copy(w, r)
 		w.Close()
 	}
