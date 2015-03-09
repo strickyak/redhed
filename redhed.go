@@ -105,7 +105,7 @@ type MiddleBin struct {
 } // 36 was 20
 
 type Holder struct {
-	Time    int64  // TODO: Millis
+	Time    int64 // TODO: Millis
 	Size    int64
 	Offset  int64
 	Hash    [16]byte
@@ -316,15 +316,20 @@ func NewWriter(fd io.WriterAt, key *Key, path string, time int64, size int64, ha
 }
 
 func (o *rWriter) Write(p []byte) (int, error) {
+	//log.Printf("rWriter::Write << %d bytes", len(p))
 	o.buf = append(o.buf, p...)
 	o.pushWholeSectors()
+	//log.Printf("rWriter::Write >> Wrote %d", len(p))
 	return len(p), nil
 }
 func (o *rWriter) Close() error {
+	//log.Printf("rWriter::Write Close...")
 	o.pushFinal()
+	//log.Printf("rWriter::Write Close... Pushed.")
 	return nil
 }
 func (o *rWriter) pushWholeSectors() {
+	//log.Printf("rWriter::pushWholeSectors: Len(o.buf) = %d", Len(o.buf))
 	for Len(o.buf) > o.payLen { // Might leave one whole sector, when Len(o.buf) == o.payLen.
 		off := o.sector * o.payLen
 		h := Holder{
@@ -476,6 +481,7 @@ func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 	plain := h.Bytes()
 	chunk := SealChunk(o.key, plain)
 	n, err := o.fd.WriteAt(chunk, o.sector*ChunkLen)
+	//log.Printf("rWriter::EncryptSectorAndWrite: wrote %d bytes, sector %d, err %q", n, o.sector, StrErr(err))
 	o.sector++
 	if err != nil {
 		log.Panicln(err)
@@ -485,41 +491,54 @@ func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 	}
 }
 
-// GetEncryptedPath returns an encrypted path relative to topname, using prefix "d^.../d^....../f^.../r^...", using existing directory names if available.
+// GetEncryptedPath returns an encrypted path relative to topname.
 func GetEncryptedPath(topname, pathname string, key *Key) string {
-	var z []string
+	//log.Printf("GetEncryptedPath: topname %q pathname %q key %d", topname, pathname, key.ID)
+	if topname == "." {
+		panic("WTF")
+	}
+	if pathname == "" {
+		panic("WTF")
+	}
+	if pathname == "." {
+		panic("WTF")
+	}
+	var zz []string
 	t := topname
 	w := strings.Split(pathname, "/")
-	n := len(w)
 	for i, e := range w {
-		pre := "d^"
-		switch i {
-		case n - 2:
-			pre = "f^"
-		case n - 1:
-			pre = "r^"
+		//log.Printf("GetEncryptedPath: step [%d] %q ...", i, e)
+		if e == "" || e == "." {
+			continue
 		}
-
+		if strings.HasPrefix(e, "%") {
+			panic("GetEncryptedPath: plaintext has prefix %: <<< " + pathname)
+		}
 		x := ""
-		gg, err := F.Glob(F.Join(t, pre+"*"))
+		gg, err := F.Glob(F.Join(t, "%*"))
 		if err != nil {
 			panic(err)
 		}
 		for _, g := range gg {
-			gb := F.Base(g)[2:]
+			gb := F.Base(g)
+			//log.Printf("GetEncryptedPath: step [%d] %q Considering: %q", i, e, gb)
 			if DecryptFilename(gb, key) == e {
 				x = gb
+				//log.Printf("GetEncryptedPath: step [%d] %q USING: %q", i, e, gb)
 				break
 			}
 		}
 		if x == "" {
 			x = EncryptFilename(e, key)
+			//log.Printf("GetEncryptedPath: step [%d] %q GENERATING: %q", i, e, x)
 		}
-		z = append(z, pre+x)
-		t = F.Join(t, pre+x)
+		zz = append(zz, x)
+		t = F.Join(t, x)
 	}
 
-	return strings.Join(z, "/")
+	z := strings.Join(zz, "/")
+	// log.Printf("GetEncryptedPath returns: %q %q >>> %q", topname, pathname, z)
+	return z
 }
 
 func EncryptFilename(name string, key *Key) string {
@@ -555,14 +574,26 @@ func EncryptFilename(name string, key *Key) string {
 	var bits []byte
 	bits = append(bits, nonce...)
 	bits = append(bits, blocks...)
-	dark := base64.URLEncoding.EncodeToString(bits)
+	dark := "%" + base64.URLEncoding.EncodeToString(bits)
+	//log.Printf("EncryptFilename returns: key=%d %q >>> %q", key.ID, name, dark)
 	return dark
 }
 
 func DecryptFilename(dark string, key *Key) string {
-	x, err := base64.URLEncoding.DecodeString(dark)
+	//log.Printf("DecryptFilename: %q %d", dark, key.ID)
+	if !strings.HasPrefix(dark, "%") {
+		log.Panicf("W/ DecryptFilename: does not have prefix '%%': %q", dark)
+		return ""
+	}
+	if len(dark) < 40 {
+		log.Panicf("W/ DecryptFilename: too short: %q", dark)
+		return ""
+	}
+
+	x, err := base64.URLEncoding.DecodeString(dark[1:])
 	if err != nil {
-		log.Panicln(err)
+		log.Panicf("W/ base64.URLEncoding.DecodeString: %s", err.Error())
+		return ""
 	}
 
 	nonce := x[:12]
@@ -576,10 +607,12 @@ func DecryptFilename(dark string, key *Key) string {
 	// As a bit of a sanity check, forbid ctrl chars in name.
 	for _, ch := range name {
 		if ch < 32 {
-			log.Panicf("DecryptFilename: Bad char in filename, ch = %d", ch)
+			log.Panicf("W/ DecryptFilename: Bad char in filename, ch = %d", ch)
+			return ""
 		}
 	}
 
+	//log.Printf("DecryptFilename returns: key=%d %q >>> %q", key.ID, dark, name)
 	return name
 }
 
@@ -640,12 +673,13 @@ type StreamWriter struct {
 	hasher hash.Hash
 	w      io.Writer
 
-	MTimeMillis     int64
-	Size     int64
-	Hash     [16]byte
-	Topname  string
-	tempname string
-	fnGetName  func(*StreamWriter) string
+	MTimeMillis int64
+	Size        int64
+	Hash        [16]byte
+	Topname     string
+	RawDest     string
+	tempname    string
+	fnGetName   func(*StreamWriter) string
 }
 
 // NewStreamWriter() gives you a Writer that you can write and close, before you need to decide the filaname.
@@ -669,25 +703,38 @@ func NewStreamWriter(topname string, key *Key, mtimeMillis int64, fnGetName func
 	}
 	w := NewWriter(tmpfd, tmpkey, "?", mtimeMillis, 0 /*Size*/, *new([16]byte) /*Hash*/)
 
-  if mtimeMillis <= 0 {
-    mtimeMillis = time.Now().Unix() * 1000
-  }
-	z := &StreamWriter{
-		Topname:  topname,
-		tempname: tempname,
-		hasher:   md5.New(),
-		tmpfd:    tmpfd,
-		tmpkey:   tmpkey,
-		key:      key,
-		MTimeMillis:      mtimeMillis,
-		w:        w,
-		fnGetName:  fnGetName,
+	if mtimeMillis <= 0 {
+		mtimeMillis = time.Now().Unix() * 1000
 	}
+	z := &StreamWriter{
+		Topname:     topname,
+		tempname:    tempname,
+		hasher:      md5.New(),
+		tmpfd:       tmpfd,
+		tmpkey:      tmpkey,
+		key:         key,
+		MTimeMillis: mtimeMillis,
+		w:           w,
+		fnGetName:   fnGetName,
+	}
+	id := 999999999
+	if key != nil {
+		id = int(key.ID)
+	}
+	log.Printf("NewStreamWriter: top=%q key=%d mt=%d tmp=%s", topname, id, mtimeMillis, tempname)
 	return z
+}
+
+func StrErr(e error) string {
+	if e == nil {
+		return "{*nil*}"
+	}
+	return "{*" + e.Error() + "*}"
 }
 
 func (o *StreamWriter) Write(p []byte) (int, error) {
 	n, err := o.tmpfd.Write(p)
+	println("StreamWriter::Write: <<< ", len(p), " >>> ", n, StrErr(err))
 	o.Size += int64(n)
 	o.hasher.Write(p[:n])
 	return n, err
@@ -697,41 +744,81 @@ func (o *StreamWriter) Close() (err error) {
 	copy(o.Hash[:], o.hasher.Sum(nil))
 	println("StreamWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
 	r := o.tmpfd
+	checkSize, err := r.Seek(0, 2)
+	if err != nil {
+		panic(err)
+	}
+	if checkSize != o.Size {
+		log.Panicf("checkSize %d oSize %d", checkSize, o.Size)
+	}
 	r.Seek(0, 0)
 	var dest string
 
-	defer func() {
-		bad := recover()
-		r.Close()
-		if bad == nil {
-			log.Printf("StreamWriter::Close: OKAY: ", dest)
-			err = nil
-		} else {
-			log.Panicf("StreamWriter::Close: ERROR:  dest=%q  err=%v", dest, bad)
-		}
-	}()
+	/*
+		defer func() {
+			bad := recover()
+			r.Close()
+			if bad == nil {
+				log.Printf("StreamWriter::Close: OKAY: ", dest)
+				err = nil
+			} else {
+				log.Panicf("StreamWriter::Close: ERROR:  dest=%q  err=%v", dest, bad)
+			}
+		}()
+	*/
 
 	pathname := o.fnGetName(o)
+	if pathname == "" {
+		panic("WTF, empty")
+	}
+	println("o.fnGetName returns pathname: ", pathname)
 	if o.key == nil {
+		o.RawDest = pathname
 		dest = F.Join(o.Topname, pathname)
+		println("redhed.StreamWriter::Close: o.key==nil, RawDest: ", o.RawDest)
+		println("redhed.StreamWriter::Close: o.key==nil, dest: ", dest)
+
 		os.MkdirAll(F.Dir(dest), 0777)
 		w, err := os.Create(dest)
 		if err != nil {
 			return err
 		}
-		io.Copy(w, r)
-		w.Close()
+
+		n, err := io.Copy(w, r)
+		log.Printf("redhed.StreamWriter::Close: io.Copy copied %d with err %q", n, StrErr(err))
+		if err != nil {
+			return err
+		}
+
+		checkSize, err := r.Seek(0, 2)
+		if err != nil {
+			panic(err)
+		}
+		if checkSize != o.Size {
+			log.Panicf("checkSize %d oSize %d", checkSize, o.Size)
+		}
+
+		err = w.Close()
+		log.Printf("redhed.StreamWriter::Close: Close >>> %q", StrErr(err))
+		return err
 	} else {
-		dest = F.Join(o.Topname, GetEncryptedPath(o.Topname, pathname, o.key))
-		println("StreamWriter::Close: dest:", dest)
+		o.RawDest = GetEncryptedPath(o.Topname, pathname, o.key)
+		dest = F.Join(o.Topname, o.RawDest)
+		println("redhed.StreamWriter::Close: RawDest:", o.RawDest)
+		println("redhed.StreamWriter::Close: dest:", dest)
 		os.MkdirAll(F.Dir(dest), 0777)
 		wfd, err := os.Create(dest)
 		if err != nil {
 			return err
 		}
 		w := NewWriter(wfd, o.key, pathname, o.MTimeMillis, o.Size, o.Hash)
-		io.Copy(w, r)
-		w.Close()
+		n, err := io.Copy(w, r)
+		log.Printf("redhed.StreamWriter::Close: io.Copy copied %d with err %q", n, StrErr(err))
+		if err != nil {
+			return err
+		}
+		err = w.Close()
+		log.Printf("redhed.StreamWriter::Close: Close >>> %q", StrErr(err))
+		return err
 	}
-	return nil
 }
