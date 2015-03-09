@@ -506,7 +506,7 @@ func GetEncryptedPath(topname, pathname string, key *Key) string {
 	var zz []string
 	t := topname
 	w := strings.Split(pathname, "/")
-	for i, e := range w {
+	for _, e := range w {
 		//log.Printf("GetEncryptedPath: step [%d] %q ...", i, e)
 		if e == "" || e == "." {
 			continue
