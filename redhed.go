@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -26,8 +26,10 @@ import (
 	"time"
 )
 
-// We choose these:
-const Magic = 32021 // od -c: "0000000 025   }"
+// Magic1 uses the key for all chunks.
+const Magic1 = 32021 // od -c: "0000000 025   }"
+// Magic2 derives a new key for each chunk.
+const Magic2 = 32020 // od -c: "0000000 025   |"
 
 var Ian = binary.LittleEndian
 
@@ -218,16 +220,52 @@ func NewKey(id string, pw []byte) *Key {
 	}
 	return z
 }
+func HashJoin(sz int, data... []byte) []byte {
+  hasher := sha256.New()
+  for _, x := range data {
+    xlen, err := hasher.Write(x)
+    if err != nil { panic(err) }
+    if xlen != len(x) { panic("Short Write on md5") }
+  }
+  return hasher.Sum(nil)[:sz]
+}
 
-func SealChunk(key *Key, in []byte) []byte {
-	if len(in) != EncLen {
-		log.Panicln("bad len(in)")
-	}
-	h := IVHead{Magic: Magic, KeyID: key.ID}
-	_, err := rand.Read(h.Nonce[:])
+func DeriveKey(base *Key, varient []byte) *Key {
+  pw2 := HashJoin(32, base.PW, varient)
+	z := &Key{ID: base.ID, PW: pw2}
+  var err error
+	z.AES, err = aes.NewCipher(pw2)
 	if err != nil {
 		log.Panicln(err)
 	}
+	z.GCM, err = cipher.NewGCM(z.AES)
+	if err != nil {
+		log.Panicln(err)
+	}
+	return z
+}
+
+func SealChunk(key *Key, magic int16, in []byte) []byte {
+	if len(in) != EncLen {
+		log.Panicln("bad len(in)")
+	}
+	h := IVHead{KeyID: key.ID}
+	n, err := rand.Read(h.Nonce[:])
+	if err != nil {
+		log.Panicln(err)
+	}
+	if n != 12 {
+		log.Panicf("short read: %d", n)
+	}
+  switch magic {
+  case Magic1:
+    h.Magic = Magic1
+  case Magic2:
+    h.Magic = Magic2
+    key = DeriveKey(key, h.Nonce[:])
+  default:
+    log.Panicf("bad magic: %d", magic)
+  }
 	var buf bytes.Buffer
 	err = binary.Write(&buf, Ian, h)
 	if err != nil {
@@ -243,12 +281,17 @@ func OpenChunk(key *Key, in []byte) *Holder {
 	}
 	head := &IVHead{}
 	head.FromBytes(in[:16])
-	if head.Magic != Magic {
-		log.Panicf("bad Chunk Magic: got %d want %d", head.Magic, Magic)
-	}
 	if head.KeyID != key.ID {
 		log.Panicf("bad Chunk Key ID: got %d want %d", head.KeyID, key.ID)
 	}
+  switch head.Magic {
+  case Magic1:
+    ;
+  case Magic2:
+    key = DeriveKey(key, head.Nonce[:])
+  default:
+		log.Panicf("bad Chunk Magic: got %d", head.Magic)
+  }
 
 	z, err := key.GCM.Open(nil, head.Nonce[:], in[16:], nil)
 	if err != nil {
@@ -296,16 +339,18 @@ type rWriter struct {
 	time int64
 	size int64
 	hash [16]byte
+  magic int16
 
 	payLen int64
 	buf    []byte
 	sector int64
 }
 
-func NewWriter(fd io.WriterAt, key *Key, path string, time int64, size int64, hash [16]byte) io.WriteCloser {
+func NewWriter(fd io.WriterAt, key *Key, magic int16, path string, time int64, size int64, hash [16]byte) io.WriteCloser {
 	z := &rWriter{
 		fd:     fd,
 		key:    key,
+		magic:    magic,
 		path:   path,
 		time:   time,
 		size:   size,
@@ -479,7 +524,7 @@ func (o *rReader) ReadAndDecryptSector() (h *Holder) {
 
 func (o *rWriter) EncryptSectorAndWrite(h Holder) {
 	plain := h.Bytes()
-	chunk := SealChunk(o.key, plain)
+	chunk := SealChunk(o.key, o.magic, plain)
 	n, err := o.fd.WriteAt(chunk, o.sector*ChunkLen)
 	//log.Printf("rWriter::EncryptSectorAndWrite: wrote %d bytes, sector %d, err %q", n, o.sector, StrErr(err))
 	o.sector++
@@ -672,6 +717,7 @@ type StreamWriter struct {
 	tmpfd  *os.File
 	hasher hash.Hash
 	w      io.Writer
+  magic   int16
 
 	MTimeMillis int64
 	Size        int64
@@ -684,7 +730,7 @@ type StreamWriter struct {
 
 // NewStreamWriter() gives you a Writer that you can write and close, before you need to decide the filaname.
 // Also it lets you put the correct final hash & size in each redhed block.
-func NewStreamWriter(topname string, key *Key, mtimeMillis int64, fnGetName func(*StreamWriter) string) *StreamWriter {
+func NewStreamWriter(topname string, key *Key, magic int16, mtimeMillis int64, fnGetName func(*StreamWriter) string) *StreamWriter {
 	tmppw := make([]byte, 32)
 	rand.Read(tmppw)
 	tmpkey := NewKey("0", tmppw)
@@ -701,7 +747,7 @@ func NewStreamWriter(topname string, key *Key, mtimeMillis int64, fnGetName func
 	if err != nil {
 		panic(err)
 	}
-	w := NewWriter(tmpfd, tmpkey, "?", mtimeMillis, 0 /*Size*/, *new([16]byte) /*Hash*/)
+	w := NewWriter(tmpfd, tmpkey, Magic1, "?", mtimeMillis, 0 /*Size*/, *new([16]byte) /*Hash*/)
 
 	if mtimeMillis <= 0 {
 		mtimeMillis = time.Now().Unix() * 1000
@@ -709,13 +755,14 @@ func NewStreamWriter(topname string, key *Key, mtimeMillis int64, fnGetName func
 	z := &StreamWriter{
 		Topname:     topname,
 		tempname:    tempname,
-		hasher:      md5.New(),
+		hasher:      sha256.New(),
 		tmpfd:       tmpfd,
 		tmpkey:      tmpkey,
 		key:         key,
 		MTimeMillis: mtimeMillis,
 		w:           w,
 		fnGetName:   fnGetName,
+		magic:   magic,
 	}
 	id := 999999999
 	if key != nil {
@@ -741,7 +788,7 @@ func (o *StreamWriter) Write(p []byte) (int, error) {
 }
 
 func (o *StreamWriter) Close() (err error) {
-	copy(o.Hash[:], o.hasher.Sum(nil))
+	copy(o.Hash[:], o.hasher.Sum(nil)[:16])
 	println("StreamWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
 	r := o.tmpfd
 	checkSize, err := r.Seek(0, 2)
@@ -811,7 +858,7 @@ func (o *StreamWriter) Close() (err error) {
 		if err != nil {
 			return err
 		}
-		w := NewWriter(wfd, o.key, pathname, o.MTimeMillis, o.Size, o.Hash)
+		w := NewWriter(wfd, o.key, o.magic, pathname, o.MTimeMillis, o.Size, o.Hash)
 		n, err := io.Copy(w, r)
 		log.Printf("redhed.StreamWriter::Close: io.Copy copied %d with err %q", n, StrErr(err))
 		if err != nil {

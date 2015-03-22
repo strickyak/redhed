@@ -79,53 +79,54 @@ must rh.DecodeKeyID('zaa') == -32768 + 26*32*32 + 1*32 + 1
 
 ########################################
 
-for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
-  csum = md5.Sum(data)
+for magic in [rh.Magic1, rh.Magic2]:
+  for data in ['', 'Hello Redhed\n', byt([x+42 for x in range(10000)])]:
+    csum = md5.Sum(data)
 
-  F = '__test1.tmp'
-  key = rh.NewKey('TMP', byt([x for x in range(32)]))
-  fd = os.Create(F)
-  w = rh.NewWriter(fd, key, path, 1234567890, len(data), csum)
-  w.Write(data)
-  w.Close()
-  fd.Close()
+    F = '__test1.tmp'
+    key = rh.NewKey('TMP', byt([x for x in range(32)]))
+    fd = os.Create(F)
+    w = rh.NewWriter(fd, key, magic, path, 1234567890, len(data), csum)
+    w.Write(data)
+    w.Close()
+    fd.Close()
 
-  fd = os.Open(F)
-  r = rh.NewReader(fd, key)
-  z = ioutil.ReadAll(r)
-  must len(z) == len(data)
-  if len(z) > 99:
-    must str(z)[:99] == str(data)[:99]
-    must str(z)[-99:] == str(data)[-99:]
-  else:
-    must str(z) == str(data)
+    fd = os.Open(F)
+    r = rh.NewReader(fd, key)
+    z = ioutil.ReadAll(r)
+    must len(z) == len(data)
+    if len(z) > 99:
+      must str(z)[:99] == str(data)[:99]
+      must str(z)[-99:] == str(data)[-99:]
+    else:
+      must str(z) == str(data)
 
-  t9, s9, h9 = r.TimeSizeHash()
-  must t9 == 1234567890
-  must s9 == len(data)
-  must h9 == csum
+    t9, s9, h9 = r.TimeSizeHash()
+    must t9 == 1234567890
+    must s9 == len(data)
+    must h9 == csum
 
-  if len(z) > 10:
-    # Test ReadAt.
-    for off in [i for i in range(10)] + [10-i for i in range(10)] + [rand.Intn(len(z)) for i in range(10)]:
-      bb = mkbyt(1)
-      c = r.ReadAt(bb, off)
-      say off, bb, c, z[:30]
-      must c == 1
-      must bb == z[off:off+1]
-      must bb[0] == z[off]
+    if len(z) > 10:
+      # Test ReadAt.
+      for off in [i for i in range(10)] + [10-i for i in range(10)] + [rand.Intn(len(z)) for i in range(10)]:
+        bb = mkbyt(1)
+        c = r.ReadAt(bb, off)
+        say off, bb, c, z[:30]
+        must c == 1
+        must bb == z[off:off+1]
+        must bb[0] == z[off]
 
-    # Test Seek.
-    for off in [i for i in range(10)] + [10-i for i in range(10)] + [rand.Intn(len(z)) for i in range(10)]:
-      bb = mkbyt(1)
-      r.Seek(off, 0)
-      c = r.Read(bb)
-      say off, bb, c, z[:30]
-      must c == 1
-      must bb == z[off:off+1]
-      must bb[0] == z[off]
+      # Test Seek.
+      for off in [i for i in range(10)] + [10-i for i in range(10)] + [rand.Intn(len(z)) for i in range(10)]:
+        bb = mkbyt(1)
+        r.Seek(off, 0)
+        c = r.Read(bb)
+        say off, bb, c, z[:30]
+        must c == 1
+        must bb == z[off:off+1]
+        must bb[0] == z[off]
 
-  r.Close()
+    r.Close()
 
 #########################################
 
@@ -136,7 +137,7 @@ def getname(path):
   return inner
 
 key = rh.NewKey('TMP', byt([x for x in range(32)]))
-w = rh.NewStreamWriter('/tmp', key, 0, getname('one/two/three/four'))
+w = rh.NewStreamWriter('/tmp', key, rh.Magic2, 0, getname('one/two/three/four'))
 w.Write(byt([x for x in range(8888)]))
 w.Close()
 
