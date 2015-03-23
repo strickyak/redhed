@@ -220,20 +220,24 @@ func NewKey(id string, pw []byte) *Key {
 	}
 	return z
 }
-func HashJoin(sz int, data... []byte) []byte {
-  hasher := sha256.New()
-  for _, x := range data {
-    xlen, err := hasher.Write(x)
-    if err != nil { panic(err) }
-    if xlen != len(x) { panic("Short Write on md5") }
-  }
-  return hasher.Sum(nil)[:sz]
+func HashJoin(sz int, data ...[]byte) []byte {
+	hasher := sha256.New()
+	for _, x := range data {
+		xlen, err := hasher.Write(x)
+		if err != nil {
+			panic(err)
+		}
+		if xlen != len(x) {
+			panic("Short Write on md5")
+		}
+	}
+	return hasher.Sum(nil)[:sz]
 }
 
 func DeriveKey(base *Key, varient []byte) *Key {
-  pw2 := HashJoin(32, base.PW, varient)
+	pw2 := HashJoin(32, base.PW, varient)
 	z := &Key{ID: base.ID, PW: pw2}
-  var err error
+	var err error
 	z.AES, err = aes.NewCipher(pw2)
 	if err != nil {
 		log.Panicln(err)
@@ -257,15 +261,15 @@ func SealChunk(key *Key, magic int16, in []byte) []byte {
 	if n != 12 {
 		log.Panicf("short read: %d", n)
 	}
-  switch magic {
-  case Magic1:
-    h.Magic = Magic1
-  case Magic2:
-    h.Magic = Magic2
-    key = DeriveKey(key, h.Nonce[:])
-  default:
-    log.Panicf("bad magic: %d", magic)
-  }
+	switch magic {
+	case Magic1:
+		h.Magic = Magic1
+	case Magic2:
+		h.Magic = Magic2
+		key = DeriveKey(key, h.Nonce[:])
+	default:
+		log.Panicf("bad magic: %d", magic)
+	}
 	var buf bytes.Buffer
 	err = binary.Write(&buf, Ian, h)
 	if err != nil {
@@ -284,14 +288,14 @@ func OpenChunk(key *Key, in []byte) *Holder {
 	if head.KeyID != key.ID {
 		log.Panicf("bad Chunk Key ID: got %d want %d", head.KeyID, key.ID)
 	}
-  switch head.Magic {
-  case Magic1:
-    ;
-  case Magic2:
-    key = DeriveKey(key, head.Nonce[:])
-  default:
+	switch head.Magic {
+	case Magic1:
+
+	case Magic2:
+		key = DeriveKey(key, head.Nonce[:])
+	default:
 		log.Panicf("bad Chunk Magic: got %d", head.Magic)
-  }
+	}
 
 	z, err := key.GCM.Open(nil, head.Nonce[:], in[16:], nil)
 	if err != nil {
@@ -333,13 +337,13 @@ func (o *rReader) TimeSizeHash() (int64, int64, []byte) {
 }
 
 type rWriter struct {
-	fd   io.WriterAt
-	key  *Key
-	path string
-	time int64
-	size int64
-	hash [16]byte
-  magic int16
+	fd    io.WriterAt
+	key   *Key
+	path  string
+	time  int64
+	size  int64
+	hash  [16]byte
+	magic int16
 
 	payLen int64
 	buf    []byte
@@ -350,7 +354,7 @@ func NewWriter(fd io.WriterAt, key *Key, magic int16, path string, time int64, s
 	z := &rWriter{
 		fd:     fd,
 		key:    key,
-		magic:    magic,
+		magic:  magic,
 		path:   path,
 		time:   time,
 		size:   size,
@@ -717,7 +721,7 @@ type StreamWriter struct {
 	tmpfd  *os.File
 	hasher hash.Hash
 	w      io.Writer
-  magic   int16
+	magic  int16
 
 	MTimeMillis int64
 	Size        int64
@@ -762,13 +766,15 @@ func NewStreamWriter(topname string, key *Key, magic int16, mtimeMillis int64, f
 		MTimeMillis: mtimeMillis,
 		w:           w,
 		fnGetName:   fnGetName,
-		magic:   magic,
+		magic:       magic,
 	}
-	id := 999999999
-	if key != nil {
-		id = int(key.ID)
-	}
-	log.Printf("NewStreamWriter: top=%q key=%d mt=%d tmp=%s", topname, id, mtimeMillis, tempname)
+	/*
+		id := 999999999
+		if key != nil {
+			id = int(key.ID)
+		}
+		log.Printf("NewStreamWriter: top=%q key=%d mt=%d tmp=%s", topname, id, mtimeMillis, tempname)
+	*/
 	return z
 }
 
@@ -781,7 +787,7 @@ func StrErr(e error) string {
 
 func (o *StreamWriter) Write(p []byte) (int, error) {
 	n, err := o.tmpfd.Write(p)
-	println("StreamWriter::Write: <<< ", len(p), " >>> ", n, StrErr(err))
+	// println("StreamWriter::Write: <<< ", len(p), " >>> ", n, StrErr(err))
 	o.Size += int64(n)
 	o.hasher.Write(p[:n])
 	return n, err
@@ -789,7 +795,7 @@ func (o *StreamWriter) Write(p []byte) (int, error) {
 
 func (o *StreamWriter) Close() (err error) {
 	copy(o.Hash[:], o.hasher.Sum(nil)[:16])
-	println("StreamWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
+	// println("StreamWriter::Close: final len:", o.Size, " final hash:", hex.EncodeToString(o.Hash[:]))
 	r := o.tmpfd
 	checkSize, err := r.Seek(0, 2)
 	if err != nil {
@@ -800,19 +806,6 @@ func (o *StreamWriter) Close() (err error) {
 	}
 	r.Seek(0, 0)
 	var dest string
-
-	/*
-		defer func() {
-			bad := recover()
-			r.Close()
-			if bad == nil {
-				log.Printf("StreamWriter::Close: OKAY: ", dest)
-				err = nil
-			} else {
-				log.Panicf("StreamWriter::Close: ERROR:  dest=%q  err=%v", dest, bad)
-			}
-		}()
-	*/
 
 	pathname := o.fnGetName(o)
 	if pathname == "" {
